@@ -8,7 +8,6 @@ try:
 except Exception:
     pass
 from io import BytesIO
-from LRFutils import color
 from copy import deepcopy as copy
 from ...modules import mmi
 from ...modules import phase

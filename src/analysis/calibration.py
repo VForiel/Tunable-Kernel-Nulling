@@ -1,8 +1,3 @@
-"""Fonctions d'algorithmes de calibration et routines de comparaison.
-
-Contient des approches de calibration (génétique et par obstruction),
-et des utilitaires pour afficher la profondeur de nulling obtenue.
-"""
 import numpy as np
 import matplotlib.pyplot as plt
 try:
@@ -10,22 +5,11 @@ try:
 except Exception:
     pass
 import astropy.units as u
-from LRFutils import color
 from scipy.stats import linregress
 from copy import deepcopy as copy
 from phise import Context
 
 def genetic_approach(ctx: Context=None, β: float=0.9, verbose=False, figsize=(10, 10), σ_rms=None):
-    """"genetic_approach.
-
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
     if ctx is None:
         ctx = Context.get_VLTI()
     else:
@@ -41,16 +25,6 @@ Returns
     return ctx
 
 def obstruction_approach(ctx: Context=None, n: int=1000, σ_rms=None, figsize=(10, 10)):
-    """"obstruction_approach.
-
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
     if ctx is None:
         ctx = Context.get_VLTI()
     else:
@@ -66,16 +40,6 @@ Returns
     return ctx
 
 def print_kernel_null_depth_lab_space_atm(ctx: Context):
-    """"print_kernel_null_depth_lab_space_atm.
-
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
     ctx = copy(ctx)
     ctx.Γ = 0 * u.nm
     print('Performances in lab (Γ=0)')
@@ -88,16 +52,6 @@ Returns
     print_kernel_null_depth(ctx)
 
 def print_kernel_null_depth(ctx: Context, N=100):
-    """"print_kernel_null_depth.
-
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
     kernels = np.empty((N, 3))
     bright = np.empty(N)
     for i in range(N):
@@ -119,16 +73,6 @@ Returns
     print('   Std:  ' + ' | '.join([f'{i / b_mean:.2e}' for i in k_std]))
 
 def compare_approaches(ctx: Context=None, β: float=0.9, n: int=10000, figsize=(10, 10)):
-    """"compare_approaches.
-
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
     if ctx is None:
         ctx = Context.get_VLTI()
         ctx.monochromatic = True

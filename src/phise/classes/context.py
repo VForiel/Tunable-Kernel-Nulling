@@ -16,7 +16,6 @@ try:
 except Exception:
     plt = None
 from io import BytesIO
-from LRFutils import color
 from scipy.optimize import curve_fit
 
 # Internal libs
@@ -645,7 +644,7 @@ class Context:
         while Δφ > ε:
 
             if verbose:
-                print(color.black(color.on_red(f"--- New iteration ---")), f"Δφ={Δφ:.2e}")
+                print(f"--- New iteration --- Δφ={Δφ:.2e}")
 
             for i in φb + φk:
                 log = ""
@@ -674,29 +673,29 @@ class Context:
 
                 # Maximize the bright metric for group 1 shifters
                 if i in φb:
-                    log += "Shift " + color.black(color.on_lightgrey(f"{i}")) + " Bright: " + color.black(color.on_green(f"{b_neg:.2e} | {b_old:.2e} | {b_pos:.2e}")) + " -> "
+                    log += f"Shift {i} Bright: {b_neg:.2e} | {b_old:.2e} | {b_pos:.2e} -> "
 
                     if b_pos > b_old and b_pos > b_neg:
-                        log += color.black(color.on_green(" + "))
+                        log += " + "
                         self.interferometer.chip.φ[i-1] += Δφ
                     elif b_neg > b_old and b_neg > b_pos:
-                        log += color.black(color.on_green(" - "))
+                        log += " - "
                         self.interferometer.chip.φ[i-1] -= Δφ
                     else:
-                        log += color.black(color.on_green(" = "))
+                        log += " = "
 
                 # Minimize the kernel metric for group 2 shifters
                 else:
-                    log += "Shift " + color.black(color.on_lightgrey(f"{i}")) + " Kernel: " + color.black(color.on_blue(f"{k_neg:.2e} | {k_old:.2e} | {k_pos:.2e}")) + " -> "
+                    log += f"Shift {i} Kernel: {k_neg:.2e} | {k_old:.2e} | {k_pos:.2e} -> "
 
                     if k_pos < k_old and k_pos < k_neg:
                         self.interferometer.chip.φ[i-1] += Δφ
-                        log += color.black(color.on_blue(" + "))
+                        log += " + "
                     elif k_neg < k_old and k_neg < k_pos:
                         self.interferometer.chip.φ[i-1] -= Δφ
-                        log += color.black(color.on_blue(" - "))
+                        log += " - "
                     else:
-                        log += color.black(color.on_blue(" = "))
+                        log += " = "
                 
                 if verbose:
                     print(log)

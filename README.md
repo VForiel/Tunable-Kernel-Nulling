@@ -11,7 +11,7 @@ The repository also ships demo notebooks and a complete documentation
 ## Requirements and installation
 
 - Python 3.11 or upper.
-- Main dependencies: numpy, astropy, scipy, matplotlib, numba, ipywidgets, sympy, LRFutils, etc. (handled automatically).
+- Main dependencies: numpy, astropy, scipy, matplotlib, numba, ipywidgets, sympy, etc. (handled automatically).
 
 Two installation paths:
 

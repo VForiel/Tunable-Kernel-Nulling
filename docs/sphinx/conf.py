@@ -44,7 +44,6 @@ autodoc_mock_imports = [
     'git',
     'astropy',
     'numpy',
-    'LRFutils',
 ]
 
 # Napoleon settings: activer Google ET NumPy pour couvrir les deux styles

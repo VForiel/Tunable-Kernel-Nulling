@@ -8,6 +8,4 @@ nbformat
 pandas
 jupyterlab
 ipykernel
-notebook
-LRFutils
 fitter
