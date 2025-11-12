@@ -12,24 +12,7 @@ from phise import Context
 from phise.modules.test_statistics import ALL_TESTS
 import phise.modules.test_statistics as ts
 
-"""Tests statistiques et outils ROC.
-
-Fournit des fonctions pour calculer et tracer les courbes ROC, évaluer
-la puissance des tests statistiques sur des simulations et comparer
-différentes lois ajustées aux données.
-"""
-
 def roc(t0: np.ndarray, t1: np.ndarray, test: callable):
-    """"roc.
-
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
     t0_stats = np.array([test(t0[i], t0[i + 1]) if i + 1 < t0.shape[0] else test(t0[i], t0[0]) for i in range(t0.shape[0])])
     t1_stats = np.array([test(t1[i], t0[i]) for i in range(t1.shape[0])])
     all_stats = np.concatenate([t0_stats, t1_stats])
@@ -46,16 +29,6 @@ Returns
     return (np.array(pfa), np.array(pdet), thresholds)
 
 def plot_rocs(t0: np.ndarray, t1: np.ndarray, tests: dict=ALL_TESTS, figsize=(6, 6)):
-    """"plot_rocs.
-
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
     plt.figure(figsize=figsize, constrained_layout=True)
     for (name, test) in tests.items():
         (pfa, pdet, thresholds) = roc(t0, t1, test)
@@ -70,22 +43,16 @@ Returns
     plt.show()
 
 def test_power(ctx=None, tests=ALL_TESTS, nmc=100, bootstrap=10, resolution=10, maxpoints=1000):
-    """"test_power.
 
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
+    # Build context
     if ctx is None:
         ctx = Context.get_VLTI()
         ctx.interferometer.chip.σ = np.zeros(14) * u.nm
         ctx.target.companions[0].c = 0.0001
     else:
         ctx = copy(ctx)
+
+    
     nb_values = np.logspace(1, np.log10(maxpoints), resolution, endpoint=True).astype(int)
     auc_bootstrap = copy(tests)
     power_bootstrap = copy(tests)
@@ -136,16 +103,6 @@ Returns
     plt.legend()
 
 def plot_p_values(t0, t1, tests=ALL_TESTS):
-    """"plot_p_values.
-
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
     col = min(2, len(tests))
     row = int(np.ceil(len(tests) / col))
     (_, axs) = plt.subplots(row, col, figsize=(5 * col, 5 * row))
@@ -169,64 +126,76 @@ Returns
     plt.show()
 
 def np_benchmark(ctx: Context=None):
-    """"np_benchmark.
 
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
+    # Build H1 context
     if ctx is None:
         ctx = Context.get_VLTI()
         ctx.interferometer.chip.σ = np.zeros(14) * u.nm
-        ctx.target.companions[0].c = 0.002
+        ctx.target.companions[0].c = 0.001
         ctx.monochromatic = False
     else:
         ctx = copy(ctx)
+
+    # Build H0 context
     ctx_star_only = copy(ctx)
     ctx_star_only.target.companions = []
+
+    # Generate reference distribution using the numerical model
     print('⌛ Generating distributions...')
-    samples = 1000
+    samples = 100_000
     bins = np.sqrt(samples).astype(int)
     h0_data_kn = np.empty(samples)
     h1_data_kn = np.empty(samples)
     for i in range(samples):
         print(f'{(i + 1) / samples * 100:.2f}% ({i + 1}/{samples})', end='\r')
-        outs0 = ctx_star_only.observe()
-        k0 = ctx_star_only.interferometer.chip.process_outputs(outs0)
-        h0_data_kn[i] = k0[0]
-        outs1 = ctx.observe()
-        k1 = ctx.interferometer.chip.process_outputs(outs1)
-        h1_data_kn[i] = k1[0]
+        outs_h0 = ctx_star_only.observe()
+        ker_h0 = ctx_star_only.interferometer.chip.process_outputs(outs_h0)
+        h0_data_kn[i] = ker_h0[0]
+        outs_h1 = ctx.observe()
+        ker_h1 = ctx.interferometer.chip.process_outputs(outs_h1)
+        h1_data_kn[i] = ker_h1[0]
     print('✅ Distributions generated.')
+
+    # Fit distributions
     (x0, γ0) = stats.cauchy.fit(h0_data_kn)
     (x1, γ1) = stats.cauchy.fit(h1_data_kn)
     (μ0, b0) = stats.laplace.fit(h0_data_kn)
     (μ1, b1) = stats.laplace.fit(h1_data_kn)
-    (β0, m0, s0) = stats.gennorm.fit(h0_data_kn)
-    (β1, m1, s1) = stats.gennorm.fit(h1_data_kn)
+    # (β0, m0, s0) = stats.gennorm.fit(h0_data_kn)
+    # (β1, m1, s1) = stats.gennorm.fit(h1_data_kn)
+    kde_h0 = stats.gaussian_kde(h0_data_kn)
+    kde_h1 = stats.gaussian_kde(h1_data_kn)
+
+    # Init plot
     x = np.linspace(min(np.min(h0_data_kn), np.min(h1_data_kn)), max(np.max(h0_data_kn), np.max(h1_data_kn)), 1000)
     plt.figure(figsize=(10, 6))
-    (_, h0_bins, _) = plt.hist(h0_data_kn, bins=bins, density=True, alpha=0.5, label='h0 data', color='blue', log=True)
-    (_, h1_bins, _) = plt.hist(h1_data_kn, bins=bins, density=True, alpha=0.5, label='h1 data', color='orange', log=True)
+
+    # Reference distributions
+    plt.hist(h0_data_kn, bins=bins, density=True, alpha=0.5, label='h0 data', color='blue', log=True)
+    plt.hist(h1_data_kn, bins=bins, density=True, alpha=0.5, label='h1 data', color='orange', log=True)
+    
+    # Fitted distributions
     plt.plot(x, stats.cauchy.pdf(x, loc=x0, scale=γ0), 'b--', label='h0 cauchy fit', linewidth=2)
     plt.plot(x, stats.cauchy.pdf(x, loc=x1, scale=γ1), 'r--', label='h1 cauchy fit', linewidth=2)
     plt.plot(x, stats.laplace.pdf(x, loc=μ0, scale=b0), 'b:', label='h0 laplace fit', linewidth=2)
     plt.plot(x, stats.laplace.pdf(x, loc=μ1, scale=b1), 'r:', label='h1 laplace fit', linewidth=2)
-    plt.plot(x, stats.gennorm.pdf(x, β0, m0, s0), 'b-.', label='h0 gennorm fit', linewidth=2)
-    plt.plot(x, stats.gennorm.pdf(x, β1, m1, s1), 'r-.', label='h1 gennorm fit', linewidth=2)
-    plt.plot(x, 0.5 * stats.cauchy.pdf(x, loc=x0, scale=γ0) + 0.5 * stats.laplace.pdf(x, loc=μ0, scale=b0), 'b.', label='h0 mix fit', linewidth=2)
-    plt.plot(x, 0.5 * stats.cauchy.pdf(x, loc=x1, scale=γ1) + 0.5 * stats.laplace.pdf(x, loc=μ1, scale=b1), 'r.', label='h1 mix fit', linewidth=2)
+    # plt.plot(x, stats.gennorm.pdf(x, β0, m0, s0), 'b-.', label='h0 gennorm fit', linewidth=2)
+    # plt.plot(x, stats.gennorm.pdf(x, β1, m1, s1), 'r-.', label='h1 gennorm fit', linewidth=2)
+    # plt.plot(x, 0.5 * stats.cauchy.pdf(x, loc=x0, scale=γ0) + 0.5 * stats.laplace.pdf(x, loc=μ0, scale=b0), 'b.', label='h0 mix fit', linewidth=2)
+    # plt.plot(x, 0.5 * stats.cauchy.pdf(x, loc=x1, scale=γ1) + 0.5 * stats.laplace.pdf(x, loc=μ1, scale=b1), 'r.', label='h1 mix fit', linewidth=2)
+    plt.plot(x, kde_h0(x), 'b-', label='h0 KDE', linewidth=2)
+    plt.plot(x, kde_h1(x), 'r-', label='h1 KDE', linewidth=2)
+    
+    # Finalize plot
     plt.xlabel('Test Statistic Value')
     plt.ylabel('Density')
     plt.title('Distributions and Fits')
     plt.legend()
     plt.show()
+
+    # Generate random distributions from the fitted models
     print('⌛ Generating random distributions from the fitted models...')
-    nmc = 100
+    nmc = 1000
     samples = 1000
     t0_sim = np.empty((nmc, samples))
     t1_sim = np.empty((nmc, samples))
@@ -242,8 +211,8 @@ Returns
         t1_cauchy[i] = stats.cauchy.rvs(loc=x1, scale=γ1, size=samples)
         t0_laplace[i] = stats.laplace.rvs(loc=μ0, scale=b0, size=samples)
         t1_laplace[i] = stats.laplace.rvs(loc=μ1, scale=b1, size=samples)
-        t0_gennorm[i] = stats.gennorm.rvs(beta=β0, loc=m0, scale=s0, size=samples)
-        t1_gennorm[i] = stats.gennorm.rvs(beta=β1, loc=m1, scale=s1, size=samples)
+        # t0_gennorm[i] = stats.gennorm.rvs(beta=β0, loc=m0, scale=s0, size=samples)
+        # t1_gennorm[i] = stats.gennorm.rvs(beta=β1, loc=m1, scale=s1, size=samples)
         for j in range(samples):
             outs0 = ctx_star_only.observe()
             k0 = ctx_star_only.interferometer.chip.process_outputs(outs0)
@@ -254,44 +223,20 @@ Returns
     print('✅ Random distributions generated.')
     print('⌛ Plotting ROC curves...')
 
+    # Define likelihood ratio tests for fitted distributions
     def lr_cauchy(u, v):
-        """"lr_cauchy.
-
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
         return np.sum(np.log((1 + ((u - x0) / γ0) ** 2) / (1 + ((u - x1) / γ1) ** 2)))
 
     def lr_laplace(u, v):
-        """"lr_laplace.
-
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
         return np.sum(np.abs(u - μ0) / b0 - np.abs(u - μ1) / b1)
 
-    def lr_gennorm(u, v):
-        """"lr_gennorm.
+    # def lr_gennorm(u, v):
+    #     return np.sum(np.abs((u - m0) / s0) ** β0 - np.abs((u - m1) / s1) ** β1)
 
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
-        return np.sum(np.abs((u - m0) / s0) ** β0 - np.abs((u - m1) / s1) ** β1)
+    def lr_kde(u, v):
+        return np.sum(np.log(kde_h1(u) / kde_h0(u)))
+    
+    # Plot ROC curves
     tests = copy(ALL_TESTS)
     print('📊 Simulated case:')
     plot_rocs(t0_sim, t1_sim, tests=tests, figsize=(4, 4))
@@ -301,6 +246,9 @@ Returns
     print('📊 Laplace case:')
     tests['Likelihood Ratio'] = lr_laplace
     plot_rocs(t0_laplace, t1_laplace, tests=tests, figsize=(4, 4))
-    print('📊 Gennorm case:')
-    tests['Likelihood Ratio'] = lr_gennorm
-    plot_rocs(t0_gennorm, t1_gennorm, tests=tests, figsize=(4, 4))
+    # print('📊 Gennorm case:')
+    # tests['Likelihood Ratio'] = lr_gennorm
+    # plot_rocs(t0_gennorm, t1_gennorm, tests=tests, figsize=(4, 4))
+    print('📊 KDE case:')
+    tests['Likelihood Ratio'] = lr_kde
+    plot_rocs(t0_sim, t1_sim, tests=tests, figsize=(4, 4))

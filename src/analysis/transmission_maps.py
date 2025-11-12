@@ -37,16 +37,6 @@ def gui(ctx: Context=None, N: int=100):
     transmission = widgets.HTML()
 
     def update_plot(*args):
-        """"update_plot.
-
-Parameters
-----------
-(Automatically added placeholder.)
-
-Returns
--------
-(Automatically added placeholder.)
-"""
         run.button_style = 'warning'
         ctx = copy(ref_ctx)
         ctx.interferometer.l = l_slider.value * u.deg

@@ -42,7 +42,7 @@ class Context:
         name (str): Human-readable context name.
     """
 
-    __slots__ = ('_initialized', '_interferometer', '_target', '_h', '_h_unit', '_Δh', '_Δh_unit', '_Γ', '_Γ_unit', '_name', '_p', '_ph', '_monochromatic')
+    __slots__ = ('_initialized', '_interferometer', '_target', '_h', '_h_unit', '_Δh', '_Δh_unit', '_Γ', '_Γ_unit', '_name', '_p', '_pf', '_monochromatic')
 
     def __init__(
             self,
@@ -244,9 +244,9 @@ class Context:
         """
         (Read-only) Photon flux per telescope. Shape: (n_telescopes,)
         """
-        if not hasattr(self, "_ph"):
+        if not hasattr(self, "_pf"):
             raise AttributeError("pf is not defined.")
-        return self._ph
+        return self._pf
     
     @pf.setter
     def pf(self, pf: u.Quantity):
@@ -267,7 +267,8 @@ class Context:
 
         p = η * f * a * Δλ # Optical power [W]
 
-        self._ph = p * λ / (h*c) # Photon flux [photons/s] (array of (n_telescopes,))
+        self._pf = p * λ / (h*c) # Photon flux [photons/s] (array of (n_telescopes,))
+        self._pf = self._pf.to(1/u.s)
     
     # Plot projected positions over the time ----------------------------------
 
@@ -413,7 +414,7 @@ class Context:
             if i >= nb_processed_outs:
                 axs[1, i].axis('off')
             else:
-                im = axs[1, i].imshow(processed_out_maps[i], aspect="equal", cmap="bwr" if not grad else "gray", extent=extent)
+                im = axs[1, i].imshow(processed_out_maps[i], aspect="equal", cmap="PiYG" if not grad else "gray", extent=extent)
                 axs[1, i].set_title(self.interferometer.chip._processed_output_labels[i])
                 axs[1, i].set_aspect("equal")
                 plt.colorbar(im, ax=axs[1, i])
@@ -475,16 +476,6 @@ class Context:
         for c in self.target.companions:
             pf_c = pf * c.c # Photon flux from the companion for each telescope
             input_fields.append(get_unique_source_input_fields_jit(a=pf_c, ρ=c.ρ.to(u.rad).value, θ=c.θ.to(u.rad).value, λ=λ, p=p))
-        
-        # Error OPD
-        γ = np.random.normal(0, self.Γ.to(u.m).value, size=len(self.interferometer.telescopes))
-
-        # OPD to phase difference
-        phase = 2 * np.pi * γ / λ
-
-        # Add the OPD error to the input fields
-        for i in range(len(input_fields)):
-            input_fields[i] = input_fields[i] * np.exp(1j * phase)
 
         return np.array(input_fields, dtype=np.complex128)
     
@@ -507,9 +498,12 @@ class Context:
 
     # Observation -------------------------------------------------------------
 
-    def observe_monochromatic(self):
+    def observe_monochromatic(self, static_input_opd:u.Quantity=None):
         """Observe the target with monochromatic approximation.
 
+        Args:
+            static_input_opd (Optional[u.Quantity]): If provided, use this static
+                OPD error instead of random atmospheric piston. Shape: (n_telescopes,)
         Returns:
             np.ndarray[float]: Output intensities (photon events).
         """
@@ -517,20 +511,24 @@ class Context:
         nb_outs = self.interferometer.chip.nb_raw_outputs
         nb_objects = len(self.target.companions) + 1
 
+        # Get ideall input fields
+        ψi = self.get_input_fields()
+
+        # Get input OPD (atmospheric piston) for each telescope
+        if static_input_opd is None:
+            Δφ = np.random.normal(0, self.Γ.to(u.nm).value, size=len(self.interferometer.telescopes))
+        else:
+            Δφ = static_input_opd.to(u.nm).value
+        λ = self.interferometer.λ.to(u.nm).value
+
+        # Add the OPD error to the input fields
+        for i in range(len(ψi)):
+            ψi[i] = phase.shift_jit(ψi[i], Δφ, λ)
+
         # Get output fields for all companions & star
         out_fields = np.empty((nb_objects, nb_outs), dtype=np.complex128)
-        for companion, ψc in enumerate(self.get_input_fields()):
+        for companion, ψc in enumerate(ψi):
             out_fields[companion] = self.interferometer.chip.get_output_fields(ψ=ψc, λ=self.interferometer.λ)
-
-            # Scale down companions according to their contrast with target star
-            if companion > 0:
-                out_fields[companion] *= np.sqrt(self.target.companions[companion - 1].c)
-
-        # Scale up all fields according to the target flux
-        out_fields *= np.sqrt(self.target._f)
-
-        # Scale up all fields by the bandwidth
-        out_fields *= np.sqrt(self.interferometer._Δλ)
 
         # Acquire intensity for each output
         outs = np.empty(nb_outs)
@@ -560,13 +558,16 @@ class Context:
         nb_outs = self.interferometer.chip.nb_raw_outputs
         outs = np.empty((spectral_samples, nb_outs))
 
+        # Atmospheric piston for each telescope
+        Δφ = np.random.normal(0, self.Γ.value, size=len(self.interferometer.telescopes)) * self.Γ.unit
+
         # Monochromatic approximation for each sub-band
         for i, λ in enumerate(λ_range):
             ctx_mono = copy(self)
             ctx_mono.interferometer.λ = λ
             ctx_mono.interferometer.Δλ = 1 * u.nm
 
-            _, outs[i] = ctx_mono.observe_monochromatic()
+            outs[i] = ctx_mono.observe_monochromatic(static_input_opd=Δφ)
 
         # Integrate over the bandwidth
         return np.trapz(outs, λ_range.value, axis=0)
@@ -651,24 +652,23 @@ class Context:
 
                 # Getting observation with different phase shifts
                 self.interferometer.chip.φ[i-1] += Δφ
-                _, k_pos, b_pos = self.observe()
+                outs_pos = self.observe()
 
                 self.interferometer.chip.φ[i-1] -= 2*Δφ
-                _, k_neg, b_neg = self.observe()
+                outs_neg = self.observe()
 
                 self.interferometer.chip.φ[i-1] += Δφ
-                _, k_old, b_old = self.observe()
+                outs_old = self.observe()
 
-                # Computing throughputs
-                b_pos = b_pos / total_execpted_photons
-                b_neg = b_neg / total_execpted_photons
-                b_old = b_old / total_execpted_photons
-                k_pos = np.sum(np.abs(k_pos)) / total_execpted_photons
-                k_neg = np.sum(np.abs(k_neg)) / total_execpted_photons
-                k_old = np.sum(np.abs(k_old)) / total_execpted_photons
+                b_pos = outs_pos[0]
+                b_neg = outs_neg[0]
+                b_old = outs_old[0]
+                k_old = 1/3 * np.sum(np.abs(self.interferometer.chip.process_outputs(outs_old)))
+                k_pos = 1/3 * np.sum(np.abs(self.interferometer.chip.process_outputs(outs_pos)))
+                k_neg = 1/3 * np.sum(np.abs(self.interferometer.chip.process_outputs(outs_neg)))
 
                 # Save the history
-                depth_history.append(np.sum(k_old) / np.sum(b_old))
+                depth_history.append(k_old / b_old)
                 shifters_history.append(np.copy(self.interferometer.chip.φ.value))
 
                 # Maximize the bright metric for group 1 shifters
@@ -774,13 +774,13 @@ class Context:
             for i in range(n):
 
                 if isinstance(p,list):
-                    chip.φ[p[0]-1] = i * λ / n
+                    chip.φ[p[0]-1] = x[i] * λ.unit
                     chip.φ[p[1]-1] = (chip.φ[p[0]-1] + Δp) % λ
                 else:
-                    chip.φ[p-1] = i * λ / n
+                    chip.φ[p-1] = x[i] * λ.unit
             
-                _, _, b = self.observe()
-                y[i] = b / total_photons
+                outs = self.observe()
+                y[i] = outs[0] / total_photons
             
             def sin(x, x0):
                 return (np.sin((x-x0)/λ.value*2*np.pi)+1)/2 * (np.max(y)-np.min(y)) + np.min(y)
@@ -808,10 +808,11 @@ class Context:
             y = np.empty(n)
 
             for i in range(n):
-                chip.φ[p-1] = i * λ / n
-                _, k, b = self.observe()
-                y[i] = k[m-1] / b
-            
+                chip.φ[p-1] = x[i] * λ.unit
+                outs = self.observe()
+                ker = self.interferometer.chip.process_outputs(outs)
+                y[i] = ker[m-1]
+
             def sin(x, x0):
                 return (np.sin((x-x0)/λ.value*2*np.pi)+1)/2 * (np.max(y)-np.min(y)) + np.min(y)
             
@@ -830,21 +831,29 @@ class Context:
 
         def maximize_darks(p, ds, plt_coords=None):
 
+            # Init data arrays
             x = np.linspace(0, λ.value, n)
             y = np.empty(n)
 
+            # Sampling
             for i in range(n):
-                chip.φ[p-1] = i * λ / n
-                d, _, b = self.observe()
-                y[i] = np.sum(np.abs(d[np.array(ds)-1])) / b
+                # Set phase shift
+                chip.φ[p-1] = x[i] * λ.unit
+                # Get outputs intensities
+                outs = self.observe()
+                # Compute |Di|² + |Dj|²
+                y[i] = np.sum(np.abs(outs[np.array(ds)]))
 
+            # Model
             def sin(x, x0):
                 return (np.sin((x-x0)/λ.value*2*np.pi)+1)/2 * (np.max(y)-np.min(y)) + np.min(y)
             
             popt, _ = curve_fit(sin, x, y, p0=[0], maxfev = 100_000)
 
+            # Update phase shift
             chip.φ[p-1] = (np.mod(popt[0]+λ.value/4, λ.value) * λ.unit).to(chip.φ.unit)
 
+            # Plotting
             if plot:
                 axs[plt_coords].set_title(f"$|D_{ds[0]}(\phi{p})| + |D_{ds[1]}(\phi{p})|$")
                 axs[plt_coords].scatter(x, y, label='Data', color='tab:blue')
@@ -857,20 +866,15 @@ class Context:
         # Bright maximization
         self.interferometer.chip.input_attenuation = [1, 1, 0, 0]
         maximize_bright(2, plt_coords=(0,0))
-        maximize_bright([1,2], plt_coords=(1,0))
-
-        if plot:
-            axs[1,1].axis('off')
-            axs[1,2].axis('off')
-            plt.show()
+        # maximize_bright([1,2], plt_coords=(3,0))
 
         self.interferometer.chip.input_attenuation = [0, 0, 1, 1]
         maximize_bright(4, plt_coords=(0,1))
-        maximize_bright([3,4], plt_coords=(1,1))
+        # maximize_bright([3,4], plt_coords=(3,1))
 
         self.interferometer.chip.input_attenuation = [1, 0, 1, 0]
         maximize_bright(7, plt_coords=(0,2))
-        maximize_bright([5,7], plt_coords=(1,2))
+        # maximize_bright([5,7], plt_coords=(3,2))
 
         # Darks maximization
         self.interferometer.chip.input_attenuation = [1, 0, 0, -1]
@@ -1111,7 +1115,7 @@ def get_transmission_map_jit(
 
 @nb.njit()
 def get_unique_source_input_fields_jit(
-    a: float,
+    a: np.ndarray[float],
     ρ: float,
     θ: float,
     λ: float,
@@ -1122,7 +1126,7 @@ def get_unique_source_input_fields_jit(
 
     Parameters
     ----------
-    - a: Intensity of the signal (prop. to #photons/s)
+    - a: Intensity of the signal on each telescope (in #photons/s)
     - ρ: Angular separation (in radian)
     - θ: Parallactic angle (in radian)
     - λ: Wavelength (in meter)
@@ -1147,4 +1151,4 @@ def get_unique_source_input_fields_jit(
         # Build the complex amplitude of the signal
         s[i] = np.exp(1j * Φ)
 
-    return s * np.sqrt(a / p.shape[0])
+    return s * np.sqrt(a)

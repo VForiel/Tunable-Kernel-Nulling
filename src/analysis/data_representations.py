@@ -14,6 +14,43 @@ except Exception:
     pass
 from phise import Context
 
+π = np.pi
+def get_K(Γ, α=1, β=1, φ2=π/3, φ3=π/4, φ4=π/6, n=10_000):
+
+    # tirage bruit
+    σ2 = np.random.normal(0, Γ, n)
+    σ3 = np.random.normal(0, Γ, n)
+    σ4 = np.random.normal(0, Γ, n)
+
+    # champs étoile
+    S1s = np.sqrt(α) * (1
+               + np.exp(1j*(np.pi/2 + σ2))
+               + np.exp(1j*(np.pi   + σ3))
+               + np.exp(1j*(3*np.pi/2 + σ4)))
+
+    S2s = np.sqrt(α) * (1
+               + np.exp(1j*(3*np.pi/2 + σ2))
+               + np.exp(1j*(np.pi     + σ3))
+               + np.exp(1j*(np.pi/2   + σ4)))
+
+    # champs planète (avec phases relatives)
+    S1p = np.sqrt(β) * (1
+               + np.exp(1j*(np.pi/2 + σ2 + φ2))
+               + np.exp(1j*(np.pi   + σ3 + φ3))
+               + np.exp(1j*(3*np.pi/2 + σ4 + φ4)))
+
+    S2p = np.sqrt(β) * (1
+               + np.exp(1j*(3*np.pi/2 + σ2 + φ2))
+               + np.exp(1j*(np.pi     + σ3 + φ3))
+               + np.exp(1j*(np.pi/2   + σ4 + φ4)))
+
+    Ks = np.abs(S1s)**2 - np.abs(S2s)**2
+    Kp = np.abs(S1p)**2 - np.abs(S2p)**2
+
+
+    return Ks, Kp, Ks + Kp
+
+
 def instant_distribution(ctx: Context=None, n=10000, stat=np.median, figsize=(10, 10)) -> np.ndarray:
     """
     Get the instantaneous distribution of the kernel nuller.
@@ -51,45 +88,73 @@ def instant_distribution(ctx: Context=None, n=10000, stat=np.median, figsize=(10
     data = np.empty((n, 3))
     ref_data = np.empty((n, 3))
 
+    simple_model_data = np.empty((n,))
+
     # Sample data
     for i in range(n):
-        # observe() returns raw intensities; process to get kernels
+
+        # Distrib with companion(s)
         outs = ctx.observe()
-        k = ctx.interferometer.chip.process_outputs(outs)
-        b = outs[0]
-        data[i] = k / b
+        data[i, :] = ctx.interferometer.chip.process_outputs(outs)
+
+        # Distrib with star only
         outs_ref = ref_ctx.observe()
-        k_ref = ref_ctx.interferometer.chip.process_outputs(outs_ref)
-        b_ref = outs_ref[0]
-        ref_data[i] = k_ref / b_ref
+        ref_data[i, :] = ref_ctx.interferometer.chip.process_outputs(outs_ref)
+
+    # Distrib with companion on simple model
+    ψi = ctx.get_input_fields()
+    φi1, φi2, φi3, φi4 = np.angle(ψi[1])
+    α = (np.mean(ctx.pf)).value
+    β = α * ctx.target.companions[0].c
+    Γ = ctx.Γ.to(u.nm).value / ctx.interferometer.λ.to(u.nm).value * 2 * np.pi
+    _, _, simple_model_data = get_K(Γ=Γ, α=α, β=β, φ2=φi2-φi1, φ3=φi3-φi1, φ4=φi4-φi1, n=n)
+
+    print(f"Simple: {α:.2e}, {β:.2e}")
+    print(f"Full:" + str([f"{i:.2e}, " for i in np.abs(ctx.get_input_fields().flatten())**2]))
+    print(f"{outs_ref[0]:.2e}")
+
+    plt.hist(simple_model_data, bins=100)
+    plt.title('Simple model kernel distribution')
+    plt.xlabel('Kernel output')
+    plt.ylabel('Occurrences')
+    plt.show()
 
     # Plot histograms
-    (_, axs) = plt.subplots(3, 1, figsize=figsize, sharex=True, constrained_layout=True)
-    kmin_k = np.zeros(3)
-    kmax_k = np.zeros(3)
+    (_, axs) = plt.subplots(3, 1, figsize=figsize, constrained_layout=True, sharex=True)
+
     for k in range(3):
+
+        # Get x limits
         combined = np.concatenate([data[:, k], ref_data[:, k]])
-        (kmin_k[k], kmax_k[k]) = np.percentile(combined, [5, 95])
-    kmin_k = np.min(kmin_k)
-    kmax_k = np.max(kmax_k)
-    for k in range(3):
-        bins = np.linspace(kmin_k, kmax_k, 2 * int(np.sqrt(n)) + 1)
-        combined = np.concatenate([data[:, k], ref_data[:, k]])
+        (xmin_plot, xmax_plot) = np.percentile(combined, [5, 95])
+
+        # Get bins
+        bins = np.linspace(xmin_plot, xmax_plot, 2 * int(np.sqrt(n)) + 1)
+
+        # Convert occurence to percentage
         weights_data = np.ones_like(data[:, k]) * (100.0 / data.shape[0])
-        axs[k].hist(data[:, k], label='With companion(s)', bins=bins, alpha=0.5, color='blue', weights=weights_data)
-        axs[k].axvline(stat(data[:, k]), color='blue', linestyle='--')
         weights_ref = np.ones_like(ref_data[:, k]) * (100.0 / ref_data.shape[0])
+
+        # Plot histograms
+        axs[k].hist(data[:, k], label='With companion(s)', bins=bins, alpha=0.5, color='blue', weights=weights_data)
         axs[k].hist(ref_data[:, k], label='Star only', bins=bins, alpha=0.5, color='red', weights=weights_ref)
+
+        if k == 0:
+            # Plot simple model histogram
+            weights_simple_model = np.ones_like(simple_model_data) * (100.0 / simple_model_data.shape[0])
+            axs[k].hist(simple_model_data, label='Simple model', bins=bins, alpha=0.5, color='green', weights=weights_simple_model, histtype='stepfilled', linewidth=1.5)
+            axs[k].axvline(stat(simple_model_data), color='green', linestyle='--')
+
+        # Plot center line
+        axs[k].axvline(stat(data[:, k]), color='blue', linestyle='--')
         axs[k].axvline(stat(ref_data[:, k]), color='red', linestyle='--')
+
+        # Set labels
         axs[k].set_ylabel('Occurrences (%)')
-        axs[k].set_xlabel('Kernel-Null depth')
         axs[k].set_title(f'Kernel {k + 1}')
         axs[k].legend()
-        (xmin_plot, xmax_plot) = np.percentile(combined, [5, 95])
-        if xmin_plot == xmax_plot:
-            xmin_plot -= 1e-12
-            xmax_plot += 1e-12
         axs[k].set_xlim(xmin_plot, xmax_plot)
+    axs[2].set_xlabel('Kernel output')
     plt.show()
     return (data, ref_data)
 
